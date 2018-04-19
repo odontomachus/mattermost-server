@@ -17,9 +17,9 @@ type GitLabProvider struct {
 }
 
 type GitLabUser struct {
-	Id       int64  `json:"id"`
-	Username string `json:"username"`
-	Login    string `json:"login"`
+	Id       int64  `json:"sub,string"`
+	Username string `json:"preferred_username"`
+	Login    string
 	Email    string `json:"email"`
 	Name     string `json:"name"`
 }
@@ -32,9 +32,7 @@ func init() {
 func userFromGitLabUser(glu *GitLabUser) *model.User {
 	user := &model.User{}
 	username := glu.Username
-	if username == "" {
-		username = glu.Login
-	}
+	glu.Login = glu.Username
 	user.Username = model.CleanUsername(username)
 	splitName := strings.Split(glu.Name, " ")
 	if len(splitName) == 2 {

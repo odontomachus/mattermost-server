@@ -43,7 +43,7 @@ else
 endif
 
 # Golang Flags
-GOPATH ?= $(GOPATH:):./vendor
+GOPATH ?= $(shell go env GOPATH)
 GOFLAGS ?= $(GOFLAGS:)
 GO=go
 GO_LINKER_FLAGS ?= -ldflags \
@@ -56,7 +56,7 @@ GO_LINKER_FLAGS ?= -ldflags \
 # GOOS/GOARCH of the build host, used to determine whether we're cross-compiling or not
 BUILDER_GOOS_GOARCH="$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)"
 
-PLATFORM_FILES="./main.go"
+PLATFORM_FILES="./cmd/mattermost/main.go"
 
 # Output paths
 DIST_ROOT=dist
@@ -198,9 +198,9 @@ stop-docker: ## Stops the docker containers for local development.
 	fi
 
 		@if [ $(shell docker ps -a | grep -ci mattermost-minio) -eq 1 ]; then \
-    		echo stopping mattermost-minio; \
-    		docker stop mattermost-minio > /dev/null; \
-    	fi
+		echo stopping mattermost-minio; \
+		docker stop mattermost-minio > /dev/null; \
+	fi
 
 	@if [ $(shell docker ps -a | grep -ci mattermost-elasticsearch) -eq 1 ]; then \
 		echo stopping mattermost-elasticsearch; \
@@ -273,7 +273,18 @@ gofmt: ## Runs gofmt against all packages.
 
 store-mocks: ## Creates mock files.
 	go get github.com/vektra/mockery/...
-	GOPATH=$(shell go env GOPATH) $(shell go env GOPATH)/bin/mockery -dir store -all -output store/storetest/mocks -note 'Regenerate this file using `make store-mocks`.'
+	$(GOPATH)/bin/mockery -dir store -all -output store/storetest/mocks -note 'Regenerate this file using `make store-mocks`.'
+
+ldap-mocks: ## Creates mock files for ldap.
+	go get github.com/vektra/mockery/...
+	$(GOPATH)/bin/mockery -dir enterprise/ldap -all -output enterprise/ldap/mocks -note 'Regenerate this file using `make ldap-mocks`.'
+
+plugin-mocks: ## Creates mock files for plugins.
+	go get github.com/vektra/mockery/...
+	$(GOPATH)/bin/mockery -dir plugin -name API -output plugin/plugintest -outpkg plugintest -case underscore -note 'Regenerate this file using `make plugin-mocks`.'
+	$(GOPATH)/bin/mockery -dir plugin -name KeyValueStore -output plugin/plugintest -outpkg plugintest -case underscore -note 'Regenerate this file using `make plugin-mocks`.'
+	$(GOPATH)/bin/mockery -dir plugin -name Hooks -output plugin/plugintest -outpkg plugintest -case underscore -note 'Regenerate this file using `make plugin-mocks`.'
+	@sed -i'' -e 's|API|APIMOCKINTERNAL|g' plugin/plugintest/api.go
 
 update-jira-plugin: ## Updates Jira plugin.
 	go get github.com/mattermost/go-bindata/...
@@ -485,8 +496,6 @@ clean: stop-docker ## Clean up everything except persistant server data.
 	rm -f mattermost.log
 	rm -f mattermost.log.jsonl
 	rm -f npm-debug.log
-	rm -f api/mattermost.log
-	rm -f api/mattermost.log.jsonl
 	rm -f .prepare-go
 	rm -f enterprise
 	rm -f cover.out
@@ -495,6 +504,7 @@ clean: stop-docker ## Clean up everything except persistant server data.
 	rm -f *.test
 	rm -f imports/imports.go
 	rm -f cmd/platform/cprofile*.out
+	rm -f cmd/mattermost/cprofile*.out
 
 nuke: clean clean-docker ## Clean plus removes persistant server data.
 	@echo BOOM

@@ -78,12 +78,13 @@ func (a *App) MoveFile(oldPath, newPath string) *model.AppError {
 	return backend.MoveFile(oldPath, newPath)
 }
 
-func (a *App) WriteFile(f []byte, path string) *model.AppError {
+func (a *App) WriteFile(fr io.Reader, path string) (int64, *model.AppError) {
 	backend, err := a.FileBackend()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return backend.WriteFile(f, path)
+
+	return backend.WriteFile(fr, path)
 }
 
 func (a *App) RemoveFile(path string) *model.AppError {
@@ -294,11 +295,6 @@ func (a *App) GeneratePublicLink(siteURL string, info *model.FileInfo) string {
 	return fmt.Sprintf("%s/files/%v/public?h=%s", siteURL, info.Id, hash)
 }
 
-func (a *App) GeneratePublicLinkV3(siteURL string, info *model.FileInfo) string {
-	hash := GeneratePublicLinkHash(info.Id, *a.Config().FileSettings.PublicLinkSalt)
-	return fmt.Sprintf("%s%s/public/files/%v/get?h=%s", siteURL, model.API_URL_SUFFIX_V3, info.Id, hash)
-}
-
 func GeneratePublicLinkHash(fileId, salt string) string {
 	hash := sha256.New()
 	hash.Write([]byte(salt))
@@ -414,7 +410,7 @@ func (a *App) DoUploadFile(now time.Time, rawTeamId string, rawChannelId string,
 		info.ThumbnailPath = pathPrefix + nameWithoutExtension + "_thumb.jpg"
 	}
 
-	if err := a.WriteFile(data, info.Path); err != nil {
+	if _, err := a.WriteFile(bytes.NewReader(data), info.Path); err != nil {
 		return nil, err
 	}
 
@@ -531,7 +527,7 @@ func (a *App) generateThumbnailImage(img image.Image, thumbnailPath string, widt
 		return
 	}
 
-	if err := a.WriteFile(buf.Bytes(), thumbnailPath); err != nil {
+	if _, err := a.WriteFile(buf, thumbnailPath); err != nil {
 		mlog.Error(fmt.Sprintf("Unable to upload thumbnail path=%v err=%v", thumbnailPath, err))
 		return
 	}
@@ -553,7 +549,7 @@ func (a *App) generatePreviewImage(img image.Image, previewPath string, width in
 		return
 	}
 
-	if err := a.WriteFile(buf.Bytes(), previewPath); err != nil {
+	if _, err := a.WriteFile(buf, previewPath); err != nil {
 		mlog.Error(fmt.Sprintf("Unable to upload preview err=%v", err), mlog.String("path", previewPath))
 		return
 	}

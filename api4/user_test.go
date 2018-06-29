@@ -63,7 +63,7 @@ func TestCreateUser(t *testing.T) {
 	CheckBadRequestStatus(t, resp)
 
 	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableOpenServer = false })
-	th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserCreation = false })
+	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserCreation = false })
 
 	user2 := &model.User{Email: th.GenerateTestEmail(), Password: "Password1", Username: GenerateTestUsername()}
 	_, resp = AdminClient.CreateUser(user2)
@@ -170,13 +170,13 @@ func TestCreateUserWithToken(t *testing.T) {
 		<-th.App.Srv.Store.Token().Save(token)
 		defer th.App.DeleteToken(token)
 
-		th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserCreation = false })
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserCreation = false })
 
 		_, resp := Client.CreateUserWithToken(&user, token.Token)
 		CheckNotImplementedStatus(t, resp)
 		CheckErrorMessage(t, resp, "api.user.create_user.signup_email_disabled.app_error")
 
-		th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserCreation = true })
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserCreation = true })
 	})
 
 	t.Run("EnableOpenServerDisable", func(t *testing.T) {
@@ -270,7 +270,7 @@ func TestCreateUserWithInviteId(t *testing.T) {
 	t.Run("EnableUserCreationDisable", func(t *testing.T) {
 		user := model.User{Email: th.GenerateTestEmail(), Nickname: "Corey Hulen", Password: "hello1", Username: GenerateTestUsername(), Roles: model.SYSTEM_ADMIN_ROLE_ID + " " + model.SYSTEM_USER_ROLE_ID}
 
-		th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserCreation = false })
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserCreation = false })
 
 		inviteId := th.BasicTeam.InviteId
 
@@ -278,7 +278,7 @@ func TestCreateUserWithInviteId(t *testing.T) {
 		CheckNotImplementedStatus(t, resp)
 		CheckErrorMessage(t, resp, "api.user.create_user.signup_email_disabled.app_error")
 
-		th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserCreation = true })
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserCreation = true })
 	})
 
 	t.Run("EnableOpenServerDisable", func(t *testing.T) {
@@ -513,7 +513,7 @@ func TestSearchUsers(t *testing.T) {
 		t.Fatal("should have found user")
 	}
 
-	_, err := th.App.UpdateNonSSOUserActive(th.BasicUser2.Id, false)
+	_, err := th.App.UpdateActive(th.BasicUser2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestSearchUsers(t *testing.T) {
 	th.App.UpdateConfig(func(cfg *model.Config) { cfg.PrivacySettings.ShowEmailAddress = false })
 	th.App.UpdateConfig(func(cfg *model.Config) { cfg.PrivacySettings.ShowFullName = false })
 
-	_, err = th.App.UpdateNonSSOUserActive(th.BasicUser2.Id, true)
+	_, err = th.App.UpdateActive(th.BasicUser2, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,56 +1190,159 @@ func TestUpdateUserRoles(t *testing.T) {
 	CheckBadRequestStatus(t, resp)
 }
 
+func assertExpectedWebsocketEvent(t *testing.T, client *model.WebSocketClient, event string, test func(*model.WebSocketEvent)) {
+	for {
+		select {
+		case resp, ok := <-client.EventChannel:
+			if !ok {
+				t.Fatalf("channel closed before receiving expected event %s", model.WEBSOCKET_EVENT_USER_UPDATED)
+			} else if resp.Event == model.WEBSOCKET_EVENT_USER_UPDATED {
+				test(resp)
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("failed to receive expected event %s", model.WEBSOCKET_EVENT_USER_UPDATED)
+		}
+	}
+}
+
+func assertWebsocketEventUserUpdatedWithEmail(t *testing.T, client *model.WebSocketClient, email string) {
+	assertExpectedWebsocketEvent(t, client, model.WEBSOCKET_EVENT_USER_UPDATED, func(event *model.WebSocketEvent) {
+		if eventUser, ok := event.Data["user"].(map[string]interface{}); !ok {
+			t.Fatalf("expected user")
+		} else if userEmail, ok := eventUser["email"].(string); !ok {
+			t.Fatalf("expected email %s, but got nil", email)
+		} else {
+			assert.Equal(t, email, userEmail)
+		}
+	})
+}
+
 func TestUpdateUserActive(t *testing.T) {
-	th := Setup().InitBasic().InitSystemAdmin()
-	defer th.TearDown()
+	t.Run("basic tests", func(t *testing.T) {
+		th := Setup().InitBasic().InitSystemAdmin()
+		defer th.TearDown()
 
-	Client := th.Client
-	SystemAdminClient := th.SystemAdminClient
-	user := th.BasicUser
+		Client := th.Client
+		SystemAdminClient := th.SystemAdminClient
+		user := th.BasicUser
 
-	pass, resp := Client.UpdateUserActive(user.Id, false)
-	CheckNoError(t, resp)
+		EnableUserDeactivation := th.App.Config().TeamSettings.EnableUserDeactivation
+		defer func() {
+			th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserDeactivation = EnableUserDeactivation })
+		}()
 
-	if !pass {
-		t.Fatal("should have returned true")
-	}
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserDeactivation = true })
+		pass, resp := Client.UpdateUserActive(user.Id, false)
+		CheckNoError(t, resp)
 
-	pass, resp = Client.UpdateUserActive(user.Id, false)
-	CheckUnauthorizedStatus(t, resp)
+		if !pass {
+			t.Fatal("should have returned true")
+		}
 
-	if pass {
-		t.Fatal("should have returned false")
-	}
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserDeactivation = false })
+		pass, resp = Client.UpdateUserActive(user.Id, false)
+		CheckUnauthorizedStatus(t, resp)
 
-	th.LoginBasic2()
+		if pass {
+			t.Fatal("should have returned false")
+		}
 
-	_, resp = Client.UpdateUserActive(user.Id, true)
-	CheckForbiddenStatus(t, resp)
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserDeactivation = true })
+		pass, resp = Client.UpdateUserActive(user.Id, false)
+		CheckUnauthorizedStatus(t, resp)
 
-	_, resp = Client.UpdateUserActive(GenerateTestId(), true)
-	CheckForbiddenStatus(t, resp)
+		if pass {
+			t.Fatal("should have returned false")
+		}
 
-	_, resp = Client.UpdateUserActive("junk", true)
-	CheckBadRequestStatus(t, resp)
+		th.LoginBasic2()
 
-	Client.Logout()
+		_, resp = Client.UpdateUserActive(user.Id, true)
+		CheckForbiddenStatus(t, resp)
 
-	_, resp = Client.UpdateUserActive(user.Id, true)
-	CheckUnauthorizedStatus(t, resp)
+		_, resp = Client.UpdateUserActive(GenerateTestId(), true)
+		CheckForbiddenStatus(t, resp)
 
-	_, resp = SystemAdminClient.UpdateUserActive(user.Id, true)
-	CheckNoError(t, resp)
+		_, resp = Client.UpdateUserActive("junk", true)
+		CheckBadRequestStatus(t, resp)
 
-	_, resp = SystemAdminClient.UpdateUserActive(user.Id, false)
-	CheckNoError(t, resp)
+		Client.Logout()
 
-	authData := model.NewId()
-	result := <-th.App.Srv.Store.User().UpdateAuthData(user.Id, "random", &authData, "", true)
-	require.Nil(t, result.Err)
+		_, resp = Client.UpdateUserActive(user.Id, true)
+		CheckUnauthorizedStatus(t, resp)
 
-	_, resp = SystemAdminClient.UpdateUserActive(user.Id, false)
-	CheckNoError(t, resp)
+		_, resp = SystemAdminClient.UpdateUserActive(user.Id, true)
+		CheckNoError(t, resp)
+
+		_, resp = SystemAdminClient.UpdateUserActive(user.Id, false)
+		CheckNoError(t, resp)
+
+		authData := model.NewId()
+		result := <-th.App.Srv.Store.User().UpdateAuthData(user.Id, "random", &authData, "", true)
+		require.Nil(t, result.Err)
+
+		_, resp = SystemAdminClient.UpdateUserActive(user.Id, false)
+		CheckNoError(t, resp)
+	})
+
+	t.Run("websocket events", func(t *testing.T) {
+		th := Setup().InitBasic().InitSystemAdmin()
+		defer th.TearDown()
+
+		SystemAdminClient := th.SystemAdminClient
+		user := th.BasicUser2
+
+		EnableUserDeactivation := th.App.Config().TeamSettings.EnableUserDeactivation
+		defer func() {
+			th.App.UpdateConfig(func(cfg *model.Config) { cfg.TeamSettings.EnableUserDeactivation = EnableUserDeactivation })
+		}()
+
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableUserDeactivation = true })
+
+		webSocketClient, err := th.CreateWebSocketClient()
+		assert.Nil(t, err)
+		defer webSocketClient.Close()
+
+		webSocketClient.Listen()
+
+		time.Sleep(300 * time.Millisecond)
+		if resp := <-webSocketClient.ResponseChannel; resp.Status != model.STATUS_OK {
+			t.Fatal("should have responded OK to authentication challenge")
+		}
+
+		adminWebSocketClient, err := th.CreateWebSocketSystemAdminClient()
+		assert.Nil(t, err)
+		defer adminWebSocketClient.Close()
+
+		adminWebSocketClient.Listen()
+
+		time.Sleep(300 * time.Millisecond)
+		if resp := <-adminWebSocketClient.ResponseChannel; resp.Status != model.STATUS_OK {
+			t.Fatal("should have responded OK to authentication challenge")
+		}
+
+		ShowEmailAddress := th.App.Config().PrivacySettings.ShowEmailAddress
+		defer func() {
+			th.App.UpdateConfig(func(cfg *model.Config) { cfg.PrivacySettings.ShowEmailAddress = ShowEmailAddress })
+		}()
+
+		// Verify that both admins and regular users see the email when privacy settings allow same.
+		th.App.UpdateConfig(func(cfg *model.Config) { cfg.PrivacySettings.ShowEmailAddress = true })
+		_, resp := SystemAdminClient.UpdateUserActive(user.Id, false)
+		CheckNoError(t, resp)
+
+		assertWebsocketEventUserUpdatedWithEmail(t, webSocketClient, user.Email)
+		assertWebsocketEventUserUpdatedWithEmail(t, adminWebSocketClient, user.Email)
+
+		// Verify that only admins see the email when privacy settings hide emails.
+		th.App.UpdateConfig(func(cfg *model.Config) { cfg.PrivacySettings.ShowEmailAddress = false })
+		_, resp = SystemAdminClient.UpdateUserActive(user.Id, true)
+		CheckNoError(t, resp)
+
+		assertWebsocketEventUserUpdatedWithEmail(t, webSocketClient, "")
+		assertWebsocketEventUserUpdatedWithEmail(t, adminWebSocketClient, user.Email)
+	})
 }
 
 func TestGetUsers(t *testing.T) {

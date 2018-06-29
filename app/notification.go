@@ -216,7 +216,9 @@ func (a *App) SendNotifications(post *model.Post, team *model.Team, channel *mod
 				}
 			}
 
-			if userAllowsEmails && status.Status != model.STATUS_ONLINE && profileMap[id].DeleteAt == 0 {
+			autoResponderRelated := status.Status == model.STATUS_OUT_OF_OFFICE || post.Type == model.POST_AUTO_RESPONDER
+
+			if userAllowsEmails && status.Status != model.STATUS_ONLINE && profileMap[id].DeleteAt == 0 && !autoResponderRelated {
 				a.sendNotificationEmail(post, profileMap[id], channel, team, senderName, sender)
 			}
 		}
@@ -919,12 +921,13 @@ func GetExplicitMentions(message string, keywords map[string][]string) *Explicit
 
 			// remove trailing '.', as that is the end of a sentence
 			foundWithSuffix := false
-
-			for strings.HasSuffix(word, ".") {
-				word = strings.TrimSuffix(word, ".")
-				if checkForMention(word) {
-					foundWithSuffix = true
-					break
+			for _, suffixPunctuation := range []string{".", ":"} {
+				for strings.HasSuffix(word, suffixPunctuation) {
+					word = strings.TrimSuffix(word, suffixPunctuation)
+					if checkForMention(word) {
+						foundWithSuffix = true
+						break
+					}
 				}
 			}
 

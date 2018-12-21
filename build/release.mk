@@ -20,7 +20,7 @@ build-client:
 
 	cd $(BUILD_WEBAPP_DIR) && $(MAKE) build
 
-package:
+pre-package:
 	@ echo Packaging mattermost
 
 	@# Remove any old files
@@ -65,8 +65,9 @@ endif
 		curl -s https://api.github.com/repos/mattermost/$$plugin_package/releases/latest | grep browser_download_url | cut -d '"' -f 4 | wget -qi - -P  $(DIST_PATH)/prepackaged_plugins/ ;\
 	done
 
-	@# ----- PLATFORM SPECIFIC -----
+package-osx: build-windows pre-package $(DIST_PATH)-$(BUILD_TYPE_NAME)-osx-amd64.tar.gz
 
+$(DIST_PATH)-$(BUILD_TYPE_NAME)-osx-amd64.tar.gz:
 	@# Make osx package
 	@# Copy binary
 ifeq ($(BUILDER_GOOS_GOARCH),"darwin_amd64")
@@ -82,6 +83,9 @@ endif
 	rm -f $(DIST_PATH)/bin/mattermost
 	rm -f $(DIST_PATH)/bin/platform
 
+package-windows: build-windows pre-package mattermost-$(BUILD_TYPE_NAME)-windows-amd64.zip
+
+mattermost-$(BUILD_TYPE_NAME)-windows-amd64.zip:
 	@# Make windows package
 	@# Copy binary
 ifeq ($(BUILDER_GOOS_GOARCH),"windows_amd64")
@@ -97,6 +101,9 @@ endif
 	rm -f $(DIST_PATH)/bin/mattermost.exe
 	rm -f $(DIST_PATH)/bin/platform.exe
 
+package-linux: build-linux pre-package $(DIST_PATH)-$(BUILD_TYPE_NAME)-linux-amd64.tar.gz
+
+$(DIST_PATH)-$(BUILD_TYPE_NAME)-linux-amd64.tar.gz:
 	@# Make linux package
 	@# Copy binary
 ifeq ($(BUILDER_GOOS_GOARCH),"linux_amd64")
@@ -110,3 +117,5 @@ endif
 	tar -C dist -czf $(DIST_PATH)-$(BUILD_TYPE_NAME)-linux-amd64.tar.gz mattermost
 	@# Don't clean up native package so dev machines will have an unzipped package available
 	@#rm -f $(DIST_PATH)/bin/mattermost
+
+package: build-client package-linux package-osx package-windows
